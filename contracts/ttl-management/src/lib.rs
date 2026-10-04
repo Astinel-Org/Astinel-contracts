@@ -50,8 +50,10 @@ impl TtlManagement {
             .extend_ttl(&key, ttl_ledgers, ttl_ledgers + LIVE_LEDGERS);
 
         let mut entries: Vec<Symbol> = env.storage().instance().get(&ENTRIES).unwrap();
-        entries.push_back(key);
-        env.storage().instance().set(&ENTRIES, &entries);
+        if !entries.contains(&key) {
+            entries.push_back(key);
+            env.storage().instance().set(&ENTRIES, &entries);
+        }
     }
 
     pub fn read(env: &Env, key: Symbol) -> Option<DataEntry> {
@@ -144,6 +146,43 @@ mod tests {
             env.storage().instance().set(&ADMIN, &admin2);
             TtlManagement::remove(env.clone(), admin2.clone(), key.clone());
             assert!(TtlManagement::read(&env, key).is_none());
+        });
+    }
+
+    #[test]
+    fn test_write_duplicate_key_does_not_duplicate_entries() {
+        let (env, contract_id) = create_env();
+        env.mock_all_auths();
+
+        let admin = env.as_contract(&contract_id, || {
+            let admin = Address::generate(&env);
+            TtlManagement::init(env.clone(), admin.clone());
+            admin
+        });
+
+        let key = symbol_short!("DATA1");
+        let val1 = Bytes::from_array(&env, &[1, 2]);
+        let val2 = Bytes::from_array(&env, &[3, 4]);
+
+        env.as_contract(&contract_id, || {
+            TtlManagement::write(env.clone(), admin.clone(), key.clone(), val1, 100_000);
+            assert_eq!(TtlManagement::entries(&env).len(), 1);
+        });
+
+        // Writing the same key again must not add a duplicate to ENTRIES
+        env.as_contract(&contract_id, || {
+            TtlManagement::write(
+                env.clone(),
+                admin.clone(),
+                key.clone(),
+                val2.clone(),
+                200_000,
+            );
+            assert_eq!(TtlManagement::entries(&env).len(), 1);
+
+            let entry = TtlManagement::read(&env, key).unwrap();
+            assert_eq!(entry.value, val2);
+            assert_eq!(entry.ttl_ledgers, 200_000);
         });
     }
 }
