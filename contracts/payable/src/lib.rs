@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{Address, Env, Symbol, contract, contractimpl, contracttype, symbol_short};
 
 const TOTAL_SUPPLY: Symbol = symbol_short!("TOTLSUP");
 

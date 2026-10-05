@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, Symbol,
+    Address, BytesN, Env, Symbol, contract, contractimpl, contracttype, symbol_short,
 };
 
 const BALANCE: Symbol = symbol_short!("BALANCE");
