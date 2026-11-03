@@ -76,6 +76,8 @@ impl TtlManagement {
         assert!(ttl_ledgers > 0, "TTL: ttl_ledgers must be positive");
         let mut entry: DataEntry = env.storage().persistent().get(&key).unwrap();
         entry.ttl_ledgers = ttl_ledgers;
+        // Reset created_at so remaining_ttl stays consistent with the new TTL window
+        entry.created_at = env.ledger().sequence();
         env.storage().persistent().set(&key, &entry);
         env.storage()
             .persistent()
@@ -86,10 +88,18 @@ impl TtlManagement {
         env.storage().instance().get(&ENTRIES).unwrap()
     }
 
+    /// Returns the remaining TTL ledgers for the entry identified by `key`.
+    ///
+    /// The on-ledger TTL threshold after a write/extend call is
+    /// `ttl_ledgers + LIVE_LEDGERS` (the `max_ttl` arg of `extend_ttl`).
+    /// We account for the `LIVE_LEDGERS` buffer so the reported value matches
+    /// what the Soroban host actually maintains on-ledger.
     pub fn remaining_ttl(env: &Env, key: Symbol) -> Option<u32> {
         let entry: DataEntry = env.storage().persistent().get(&key)?;
         let elapsed = env.ledger().sequence().saturating_sub(entry.created_at);
-        Some(entry.ttl_ledgers.saturating_sub(elapsed))
+        // Include the LIVE_LEDGERS bump so the value matches on-ledger TTL
+        let total_ttl = entry.ttl_ledgers.saturating_add(LIVE_LEDGERS);
+        Some(total_ttl.saturating_sub(elapsed))
     }
 }
 
@@ -144,6 +154,42 @@ mod tests {
             env.storage().instance().set(&ADMIN, &admin2);
             TtlManagement::remove(env.clone(), admin2.clone(), key.clone());
             assert!(TtlManagement::read(&env, key).is_none());
+        });
+    }
+
+    #[test]
+    fn test_remaining_ttl_accounts_for_live_ledgers_buffer() {
+        let (env, contract_id) = create_env();
+        env.mock_all_auths();
+        env.as_contract(&contract_id, || {
+            let admin = Address::generate(&env);
+            TtlManagement::init(env.clone(), admin.clone());
+
+            let key = symbol_short!("TKEY");
+            let value = Bytes::from_array(&env, &[9, 8, 7]);
+            let ttl_ledgers: u32 = 100_000;
+
+            let seq_before = env.ledger().sequence();
+            TtlManagement::write(env.clone(), admin.clone(), key.clone(), value, ttl_ledgers);
+
+            // remaining_ttl must equal (ttl_ledgers + LIVE_LEDGERS) - elapsed
+            let elapsed = env.ledger().sequence().saturating_sub(seq_before);
+            let expected = ttl_ledgers.saturating_add(LIVE_LEDGERS).saturating_sub(elapsed);
+            let actual = TtlManagement::remaining_ttl(&env, key).unwrap();
+
+            assert_eq!(
+                actual, expected,
+                "remaining_ttl must account for LIVE_LEDGERS buffer: expected {expected}, got {actual}"
+            );
+        });
+    }
+
+    #[test]
+    fn test_remaining_ttl_none_for_missing_key() {
+        let (env, contract_id) = create_env();
+        env.as_contract(&contract_id, || {
+            TtlManagement::init(env.clone(), Address::generate(&env));
+            assert!(TtlManagement::remaining_ttl(&env, symbol_short!("NOPE")).is_none());
         });
     }
 }
